@@ -2,6 +2,10 @@
 
 Este script en Python permite seleccionar una carpeta y verificar si todos los archivos XLS (o XLSX) de reportes descargados de SAP, tienen la misma cantidad de columnas con datos. Si hay diferencias, indica claramente el nombre del archivo y la cantidad de columnas, resaltados en color para ubicarlos rápidamente.
 
+<div align="center">
+	<img width="743" height="716" alt="Captura de pantalla 2026-02-24 153522" src="https://github.com/user-attachments/assets/7b95ff85-74c7-4b4e-adce-54f0b1a3073a" />
+</div>
+
 ## Características
 
 - **Barra de progreso** en tiempo real para visualizar el avance del análisis.
