@@ -27,17 +27,29 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
+from rich.logging import RichHandler
 from rich.table import Table
 from rich.text import Text
 
 logger = logging.getLogger(__name__)
+
+# En consolas Windows legacy (cp1252/cp850) los emojis y símbolos no son
+# codificables y provocarían UnicodeEncodeError; se degradan a '?' en su lugar.
+if sys.platform == "win32":
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
 console = Console()
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
 EXTENSIONES_VALIDAS = (".xls", ".xlsx")
-BOM_UTF16_LE = b"\xff\xfe"
+# BOMs UTF-16 (LE y BE); pandas con encoding="utf-16" maneja ambos.
+BOMS_UTF16 = (b"\xff\xfe", b"\xfe\xff")
 
 
 # ---------------------------------------------------------------------------
@@ -134,11 +146,11 @@ def detectar_formato_archivo(ruta_archivo: Path) -> str:
         ruta_archivo: Ruta al archivo a inspeccionar.
 
     Returns:
-        ``'utf16'`` si comienza con BOM UTF-16 LE, ``'excel'`` en otro caso.
+        ``'utf16'`` si comienza con BOM UTF-16 (LE o BE), ``'excel'`` en otro caso.
     """
     with open(ruta_archivo, "rb") as f:
         primeros_bytes = f.read(2)
-    return "utf16" if primeros_bytes == BOM_UTF16_LE else "excel"
+    return "utf16" if primeros_bytes in BOMS_UTF16 else "excel"
 
 
 def leer_dataframe(ruta_archivo: Path, formato: str) -> pd.DataFrame:
@@ -221,11 +233,11 @@ def procesar_archivo(
     resultado = ResultadoArchivo(
         nombre=ruta_archivo.name,
         ruta=ruta_archivo,
-        tamano_bytes=ruta_archivo.stat().st_size,
     )
 
     inicio = time.perf_counter()
     try:
+        resultado.tamano_bytes = ruta_archivo.stat().st_size
         formato = detectar_formato_archivo(ruta_archivo)
         resultado.formato_detectado = "SAP (UTF-16)" if formato == "utf16" else "Excel"
 
@@ -239,6 +251,12 @@ def procesar_archivo(
     except (ValueError, pd.errors.ParserError, OSError) as e:
         resultado.error = str(e)
         logger.error("Error al leer %s: %s", ruta_archivo.name, e)
+    except Exception as e:
+        # xlrd (XLRDError), openpyxl (InvalidFileException) y zipfile
+        # (BadZipFile) lanzan excepciones que no heredan de las anteriores;
+        # un archivo corrupto no debe abortar el análisis del resto.
+        resultado.error = f"{type(e).__name__}: {e}"
+        logger.error("Error al leer %s: %s", ruta_archivo.name, resultado.error)
     finally:
         resultado.tiempo_proceso = time.perf_counter() - inicio
 
@@ -292,7 +310,18 @@ def analizar_carpeta(
                 for a in archivos
             }
             for futuro in as_completed(futuros):
-                resultados.append(futuro.result())
+                try:
+                    resultados.append(futuro.result())
+                except Exception as e:
+                    # Última línea de defensa: un fallo inesperado en un hilo
+                    # se registra como error del archivo y no aborta el lote.
+                    archivo = futuros[futuro]
+                    logger.error("Error inesperado procesando %s: %s", archivo.name, e)
+                    resultados.append(ResultadoArchivo(
+                        nombre=archivo.name,
+                        ruta=archivo,
+                        error=f"{type(e).__name__}: {e}",
+                    ))
                 progreso.advance(tarea)
 
     return resultados
@@ -336,10 +365,30 @@ def mostrar_resumen(
     console.print(Panel(resumen, title="📊 Resumen", border_style="blue"))
 
 
+def nombre_visible(resultado: ResultadoArchivo, carpeta: str) -> str:
+    """Retorna la ruta del archivo relativa a la carpeta analizada.
+
+    En modo recursivo varios archivos pueden compartir nombre; mostrar la
+    ruta relativa los hace distinguibles en los reportes.
+
+    Args:
+        resultado: Resultado del archivo.
+        carpeta: Carpeta base del análisis.
+
+    Returns:
+        Ruta relativa a ``carpeta``, o el nombre simple si no es posible.
+    """
+    try:
+        return str(resultado.ruta.relative_to(carpeta))
+    except ValueError:
+        return resultado.nombre
+
+
 def mostrar_tabla_detallada(
     resultados: list[ResultadoArchivo],
     num_comun: int | None,
     verbose: bool = False,
+    carpeta: str = "",
 ) -> None:
     """Muestra una tabla formateada con los resultados de cada archivo.
 
@@ -350,6 +399,7 @@ def mostrar_tabla_detallada(
         resultados: Lista de resultados del análisis.
         num_comun: Número de columnas más común (para resaltar diferencias).
         verbose: Si ``True``, muestra columnas adicionales de metadatos.
+        carpeta: Carpeta base del análisis (para rutas relativas).
     """
     tabla = Table(
         title="📋 Detalle por archivo",
@@ -386,7 +436,7 @@ def mostrar_tabla_detallada(
 
         fila: list[str | Text] = [
             str(indice),
-            Text(resultado.nombre, style=estilo_nombre),
+            Text(nombre_visible(resultado, carpeta), style=estilo_nombre),
             str(resultado.num_columnas),
             estado,
         ]
@@ -403,14 +453,22 @@ def mostrar_tabla_detallada(
         indice += 1
 
     for resultado in fallidos:
+        detalle = resultado.error or ""
+        if len(detalle) > 70:
+            detalle = detalle[:67] + "..."
         fila = [
             str(indice),
-            Text(resultado.nombre, style="dim"),
+            Text(nombre_visible(resultado, carpeta), style="dim"),
             "-",
-            Text("⚠ ERROR", style="yellow"),
+            Text(f"⚠ {detalle}", style="yellow"),
         ]
         if verbose:
-            fila.extend(["-", resultado.tamano_legible, "-", "-"])
+            fila.extend([
+                "-",
+                resultado.tamano_legible,
+                "-",
+                f"{resultado.tiempo_proceso:.2f}s",
+            ])
         tabla.add_row(*fila)
         indice += 1
 
@@ -421,6 +479,7 @@ def mostrar_tabla_detallada(
 def mostrar_archivos_diferentes(
     resultados: list[ResultadoArchivo],
     num_comun: int,
+    carpeta: str = "",
 ) -> None:
     """Muestra un bloque dedicado con los nombres de archivos que difieren.
 
@@ -430,6 +489,7 @@ def mostrar_archivos_diferentes(
     Args:
         resultados: Lista de resultados del análisis.
         num_comun: Número de columnas esperado (más común).
+        carpeta: Carpeta base del análisis (para rutas relativas).
     """
     diferentes = [
         r for r in resultados
@@ -439,9 +499,9 @@ def mostrar_archivos_diferentes(
         return
 
     lineas = [
-        f"[bold red]{r.nombre}[/bold red]  →  {r.num_columnas} columnas "
+        f"[bold red]{nombre_visible(r, carpeta)}[/bold red]  →  {r.num_columnas} columnas "
         f"(esperado: {num_comun})"
-        for r in sorted(diferentes, key=lambda r: r.nombre)
+        for r in sorted(diferentes, key=lambda r: nombre_visible(r, carpeta))
     ]
     contenido = "\n".join(lineas)
 
@@ -457,15 +517,18 @@ def mostrar_archivos_diferentes(
 def mostrar_diferencias_headers(
     resultados: list[ResultadoArchivo],
     num_comun: int | None,
+    carpeta: str = "",
 ) -> None:
     """Compara los nombres de columnas entre archivos y reporta diferencias.
 
     Toma como referencia el primer archivo que tenga la cantidad de columnas
-    más común, y compara los demás contra él.
+    más común, y compara los demás contra él. La comparación es ordenada:
+    detecta columnas renombradas, reordenadas y duplicadas.
 
     Args:
         resultados: Lista de resultados del análisis.
         num_comun: Número de columnas más común.
+        carpeta: Carpeta base del análisis (para rutas relativas).
     """
     exitosos = [r for r in resultados if r.error is None and r.nombres_columnas]
     if not exitosos:
@@ -476,27 +539,35 @@ def mostrar_diferencias_headers(
         (r for r in exitosos if r.num_columnas == num_comun),
         exitosos[0],
     )
-    headers_ref = set(referencia.nombres_columnas)
+    headers_ref = referencia.nombres_columnas
+    set_ref = set(headers_ref)
 
     diferencias_encontradas = False
     for resultado in exitosos:
         if resultado is referencia:
             continue
-        headers_actual = set(resultado.nombres_columnas)
+        headers_actual = resultado.nombres_columnas
+        # Comparación como listas: detecta renombradas, reordenadas y duplicadas
         if headers_actual != headers_ref:
             if not diferencias_encontradas:
                 console.print()
                 console.print("[bold yellow]⚠ Diferencias en nombres de columnas (headers):[/bold yellow]")
-                console.print(f"  Referencia: [cyan]{referencia.nombre}[/cyan]")
+                console.print(f"  Referencia: [cyan]{nombre_visible(referencia, carpeta)}[/cyan]")
                 diferencias_encontradas = True
 
-            solo_en_ref = headers_ref - headers_actual
-            solo_en_actual = headers_actual - headers_ref
-            console.print(f"\n  [bold red]{resultado.nombre}:[/bold red]")
+            set_actual = set(headers_actual)
+            solo_en_ref = sorted(set_ref - set_actual)
+            solo_en_actual = sorted(set_actual - set_ref)
+            console.print(f"\n  [bold red]{nombre_visible(resultado, carpeta)}:[/bold red]")
             if solo_en_ref:
-                console.print(f"    Faltan:  {', '.join(sorted(solo_en_ref))}")
+                console.print(f"    Faltan:  {', '.join(solo_en_ref)}")
             if solo_en_actual:
-                console.print(f"    Sobran:  {', '.join(sorted(solo_en_actual))}")
+                console.print(f"    Sobran:  {', '.join(solo_en_actual)}")
+            if not solo_en_ref and not solo_en_actual:
+                if len(headers_actual) != len(headers_ref):
+                    console.print("    Mismos nombres, pero hay columnas duplicadas.")
+                else:
+                    console.print("    Mismos nombres, pero en distinto orden.")
 
     if not diferencias_encontradas:
         console.print()
@@ -541,7 +612,7 @@ def reportar_resultados(
         if not todos_iguales:
             for r in exitosos:
                 if r.num_columnas != num_comun:
-                    console.print(f"  ✘ {r.nombre}: {r.num_columnas} columnas")
+                    console.print(f"  ✘ {nombre_visible(r, carpeta)}: {r.num_columnas} columnas")
         return todos_iguales
 
     # --- Modo normal / verbose ---
@@ -557,14 +628,14 @@ def reportar_resultados(
             f"diferencias (esperado: {num_comun} columnas)[/bold red]",
         )
 
-    mostrar_tabla_detallada(resultados, num_comun, verbose)
+    mostrar_tabla_detallada(resultados, num_comun, verbose, carpeta)
 
     # Panel destacado con los nombres de archivos que difieren
     if not todos_iguales:
-        mostrar_archivos_diferentes(resultados, num_comun)
+        mostrar_archivos_diferentes(resultados, num_comun, carpeta)
 
     if comparar_headers:
-        mostrar_diferencias_headers(resultados, num_comun)
+        mostrar_diferencias_headers(resultados, num_comun, carpeta)
 
     return todos_iguales
 
@@ -620,6 +691,27 @@ def exportar_resultados(
 # ---------------------------------------------------------------------------
 # Punto de entrada
 # ---------------------------------------------------------------------------
+def _entero_positivo(valor: str) -> int:
+    """Tipo de argparse: entero mayor o igual que 1.
+
+    Args:
+        valor: Valor en texto recibido por línea de comandos.
+
+    Returns:
+        El valor convertido a ``int``.
+
+    Raises:
+        argparse.ArgumentTypeError: Si no es un entero positivo.
+    """
+    try:
+        numero = int(valor)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"se esperaba un entero, se recibió: {valor!r}") from None
+    if numero < 1:
+        raise argparse.ArgumentTypeError(f"el valor debe ser >= 1, se recibió: {numero}")
+    return numero
+
+
 def parsear_argumentos() -> argparse.Namespace:
     """Parsea los argumentos de línea de comandos.
 
@@ -660,9 +752,10 @@ def parsear_argumentos() -> argparse.Namespace:
     )
     parser.add_argument(
         "--workers", "-w",
-        type=int,
+        type=_entero_positivo,
         default=4,
-        help="Número de hilos para procesamiento paralelo (por defecto: 4).",
+        metavar="N",
+        help="Número de hilos para procesamiento paralelo (entero >= 1, por defecto: 4).",
     )
     return parser.parse_args()
 
@@ -675,10 +768,15 @@ def main() -> int:
     """
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
+        format="%(message)s",
+        handlers=[RichHandler(console=console, show_path=False)],
     )
 
     args = parsear_argumentos()
+
+    if args.quiet and args.comparar_headers:
+        logger.warning("--comparar-headers no se evalúa en modo --quiet; se ignorará.")
+
     carpeta = seleccionar_carpeta(args.carpeta)
 
     if not carpeta:
