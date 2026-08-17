@@ -1,128 +1,146 @@
-# Verificador de Columnas en Archivos XLS
+# XLS Column Verifier
 
-Este script en Python permite seleccionar una carpeta y verificar si todos los archivos XLS (o XLSX) de reportes descargados de SAP, tienen la misma cantidad de columnas con datos. Si hay diferencias, indica claramente el nombre del archivo y la cantidad de columnas, resaltados en color para ubicarlos rápidamente.
+![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue?logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)
+
+> Check that every XLS/XLSX report downloaded from SAP in a folder has the same number of columns with data — differences are highlighted so you can spot them fast.
+
+## Overview
+
+This Python script scans a folder of Excel reports exported from SAP and verifies that all files share the same column count. When differences are found, it clearly reports the file name and column count, highlighted in color so they are easy to locate. Corrupt or unreadable files are reported with their error without stopping the analysis of the rest.
 
 <div align="center">
-	<img width="743" height="716" alt="Captura de pantalla 2026-02-24 153522" src="https://github.com/user-attachments/assets/7b95ff85-74c7-4b4e-adce-54f0b1a3073a" />
+	<img width="743" height="716" alt="XLS Column Verifier output" src="https://github.com/user-attachments/assets/7b95ff85-74c7-4b4e-adce-54f0b1a3073a" />
 </div>
 
-## Características
+## Features
 
-- **Barra de progreso** en tiempo real para visualizar el avance del análisis.
-- **Tabla formateada** con colores: archivos con diferencias se muestran primero y en rojo; los que no se pueden leer muestran el motivo del error.
-- **Panel destacado** con los nombres exactos de los archivos que difieren.
-- **Procesamiento paralelo** (multi-hilo) para mayor velocidad con muchos archivos.
-- **Robustez ante archivos corruptos**: un archivo dañado se reporta con su error y no detiene el análisis del resto.
-- **Comparación de headers** para detectar columnas renombradas, reordenadas o duplicadas.
-- **Escaneo recursivo** de subcarpetas (los archivos se muestran con ruta relativa para distinguir nombres repetidos).
-- **Exportación** de resultados a CSV o JSON.
-- **Modos quiet/verbose** para automatización o inspección detallada.
-- Soporte para archivos Excel nativos (.xls, .xlsx) y exportaciones de texto de SAP (UTF-16 LE y BE).
+- **Real-time progress bar** to follow the analysis.
+- **Color-coded results table**: files with differences are shown first and in red; unreadable files display the error reason.
+- **Highlighted panel** with the exact names of the files that differ.
+- **Parallel processing** (multi-threaded) for speed with many files.
+- **Robust against corrupt files**: a damaged file is reported with its error and does not stop the rest of the analysis.
+- **Header comparison** to detect renamed, reordered, or duplicated columns.
+- **Recursive scanning** of subfolders (files are shown with their relative path to distinguish repeated names).
+- **Export** results to CSV or JSON.
+- **Quiet/verbose modes** for automation or detailed inspection.
+- Supports native Excel files (.xls, .xlsx) and SAP text exports (UTF-16 LE and BE).
 
-## Requisitos
+## Tech Stack
 
-- Python 3.12+
-- Librerías: pandas, openpyxl, xlrd, rich, tkinter (tkinter viene incluido con Python)
+- **Python 3.12+** with `pandas`, `openpyxl`, `xlrd`, `rich` and `tkinter` (bundled with Python).
+- Tests with `pytest`; dependency audit with `pip-audit`.
 
-## Instalación de dependencias
+## Requirements
 
-```
+- Python 3.12 or higher.
+- Libraries: `pandas`, `openpyxl` (for .xlsx), `xlrd` (for legacy .xls), `rich`.
+
+## Installation
+
+```bash
 pip install -r requirements.txt
 ```
 
-O manualmente:
+Or manually:
 
-```
+```bash
 pip install pandas openpyxl xlrd rich
 ```
 
-Nota: Para archivos .xls (Excel 97-2003), se usa xlrd. Para .xlsx (Excel 2007+), se usa openpyxl.
+## Usage
 
-## Uso
-
-### Modo interactivo (diálogo gráfico)
-
-```
-python check_columns.py
-```
-
-Se abrirá un diálogo para seleccionar la carpeta que contiene los archivos XLS.
-
-### Modo línea de comandos (CLI)
-
-```
-python check_columns.py --carpeta "C:\ruta\a\mi\carpeta"
-python check_columns.py -c "C:\ruta\a\mi\carpeta"
-```
-
-### Opciones disponibles
-
-| Opción | Corta | Descripción |
-|--------|-------|-------------|
-| `--carpeta` | `-c` | Ruta a la carpeta con archivos XLS |
-| `--recursivo` | `-r` | Buscar también en subcarpetas |
-| `--comparar-headers` | | Comparar nombres de columnas además de la cantidad |
-| `--exportar` | `-e` | Exportar resultados a archivo (.csv o .json) |
-| `--verbose` | `-v` | Mostrar metadatos adicionales (filas, tamaño, formato, tiempo) |
-| `--quiet` | `-q` | Modo silencioso: solo una línea resumen + archivos con diferencias |
-| `--workers` | `-w` | Hilos de procesamiento paralelo (entero >= 1, por defecto: 4) |
-
-### Ejemplos
+### Interactive mode (graphical dialog)
 
 ```bash
-# Análisis básico con diálogo gráfico
+python check_columns.py
+```
+
+A dialog opens to select the folder containing the XLS files.
+
+### Command-line mode (CLI)
+
+```bash
+python check_columns.py --carpeta "C:\path\to\my\folder"
+python check_columns.py -c "C:\path\to\my\folder"
+```
+
+### Available options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--carpeta` | `-c` | Path to the folder with XLS files |
+| `--recursivo` | `-r` | Also scan subfolders |
+| `--comparar-headers` | | Compare column names in addition to the count |
+| `--exportar` | `-e` | Export results to a file (.csv or .json) |
+| `--verbose` | `-v` | Show extra metadata (rows, size, format, time) |
+| `--quiet` | `-q` | Silent mode: one summary line + files with differences |
+| `--workers` | `-w` | Parallel processing threads (integer >= 1, default: 4) |
+
+### Examples
+
+```bash
+# Basic analysis with graphical dialog
 python check_columns.py
 
-# Análisis con barra de progreso y detalles adicionales
-python check_columns.py -c "C:\SAP\Reportes" -v
+# Analysis with progress bar and extra details
+python check_columns.py -c "C:\SAP\Reports" -v
 
-# Escaneo recursivo comparando headers
-python check_columns.py -c "C:\SAP\Reportes" -r --comparar-headers
+# Recursive scan comparing headers
+python check_columns.py -c "C:\SAP\Reports" -r --comparar-headers
 
-# Exportar resultados a JSON
-python check_columns.py -c "C:\SAP\Reportes" -e resultados.json
+# Export results to JSON
+python check_columns.py -c "C:\SAP\Reports" -e results.json
 
-# Modo silencioso para scripts batch
-python check_columns.py -c "C:\SAP\Reportes" -q
+# Silent mode for batch scripts
+python check_columns.py -c "C:\SAP\Reports" -q
 ```
 
-### Códigos de salida
+### Exit codes
 
-| Código | Significado |
-|--------|-------------|
-| 0 | Éxito: todos los archivos tienen la misma cantidad de columnas |
-| 1 | Error: carpeta no seleccionada, sin archivos, o fallo de lectura |
-| 2 | Diferencias encontradas entre archivos |
+| Code | Meaning |
+|------|---------|
+| 0 | Success: all files have the same number of columns |
+| 1 | Error: no folder selected, no files, or read failure |
+| 2 | Differences found between files |
 
-## Notas
+## Notes
 
-- Se considera "columnas con datos" a las columnas que tienen al menos un valor no vacío en alguna fila.
-- Si un archivo no se puede leer como Excel, el script intenta leerlo como CSV (común en exportaciones de SAP).
-- Si un archivo no se puede leer, se mostrará el motivo del error en la tabla y el archivo se omitirá del análisis, sin detener el resto.
-- El script lee la primera hoja del archivo Excel por defecto, o el archivo CSV completo.
-- Los archivos con diferencias se muestran **primero** en la tabla y en un panel separado en rojo para ubicarlos fácilmente.
-- En consolas Windows antiguas (símbolo del sistema legacy con cp1252/cp850), los emojis y símbolos se degradan a `?` en lugar de fallar; en Windows Terminal o cualquier terminal moderna se ven correctamente.
+- "Columns with data" means columns with at least one non-empty value in any row.
+- If a file cannot be read as Excel, the script tries to read it as CSV (common in SAP exports).
+- If a file cannot be read, the error reason is shown in the table and the file is skipped without stopping the rest of the analysis.
+- The script reads the first sheet of each Excel file, or the full CSV file.
+- Files with differences are shown **first** in the table and in a separate red panel for easy spotting.
+- On legacy Windows consoles (cmd with cp1252/cp850), emojis and symbols degrade to `?` instead of failing; on Windows Terminal or any modern terminal they render correctly.
 
-## Desarrollo
+## Development
 
-Para contribuir o modificar el script, instala también las dependencias de desarrollo:
+To contribute or modify the script, also install the development dependencies:
 
-```
+```bash
 pip install -r requirements-dev.txt
 ```
 
-Ejecutar los tests (generan archivos Excel de prueba al vuelo, sin datos externos):
+Run the tests (they generate Excel fixtures on the fly, no external data needed):
 
-```
+```bash
 pytest tests/ -v
 ```
 
-Auditar vulnerabilidades de las dependencias:
+Audit dependencies for vulnerabilities:
 
-```
+```bash
 pip-audit -r requirements.txt
 ```
 
-## Licencia
+## License
 
-Este proyecto está bajo la licencia MIT. Ver el archivo [LICENSE](LICENSE).
+Distributed under the **PolyForm Noncommercial License 1.0.0** — free for
+noncommercial use only. See [LICENSE](LICENSE) for the full license text.
+
+Copyright (c) 2026 Jose Miguel Maldonado Garcia
+
+## Author
+
+**Jose Miguel Maldonado Garcia** — [@JoanMike](https://github.com/JoanMike)
